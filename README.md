@@ -457,8 +457,6 @@ Released under the [MIT License](LICENSE).
 
 <div align="center">
 
-**Building agents that touch real systems? Give them a human circuit-breaker.**
-
-⭐ **Star this repo** if stateless human-in-the-loop is the guardrail your agents needed.
+**Give your AI agents an API they can actually use — cleaner, cheaper, and safe by default.**
 
 </div>
