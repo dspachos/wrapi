@@ -1,0 +1,24 @@
+[
+  {
+    "name": "onboard_team",
+    "method": "POST",
+    "path": "/composites/onboard-team",
+    "summary": "Create a team and set its budget in one call.",
+    "steps": [
+      {
+        "id": "team",
+        "method": "POST",
+        "path": "/teams",
+        "body": { "name": "{{input.name}}", "admin_email": "{{input.admin_email}}" },
+        "rollback": { "method": "DELETE", "path": "/teams/{{steps.team.response.id}}" }
+      },
+      {
+        "id": "budget",
+        "method": "PUT",
+        "path": "/teams/{{steps.team.response.id}}/budget",
+        "body": { "max_budget": "{{input.budget}}" }
+      }
+    ],
+    "response": { "team_id": "{{steps.team.response.id}}", "status": "onboarded" }
+  }
+]

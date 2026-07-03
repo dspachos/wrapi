@@ -1,0 +1,13 @@
+.git
+**/node_modules
+compiler/node_modules
+gateway/bin
+gateway/gateway
+**/*.test
+.env
+.env.*
+examples
+scripts
+*.md
+!README.md
+.github

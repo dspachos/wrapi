@@ -1,0 +1,84 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Example API (wrapi demo)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/payments": {
+      "post": {
+        "operationId": "create_payment",
+        "summary": "Charge a customer's card.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amount", "currency"],
+                "properties": {
+                  "amount": { "type": "number", "description": "Amount to charge" },
+                  "currency": { "type": "string", "description": "ISO 4217 currency code, e.g. USD" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": { "operationId": "list_users", "summary": "List users." },
+      "post": {
+        "operationId": "create_user",
+        "summary": "Create a user.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string" },
+                  "role": { "type": "string", "description": "member | admin" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}": {
+      "get": { "operationId": "get_user", "summary": "Get a user by id." },
+      "put": { "operationId": "update_user", "summary": "Update a user." },
+      "delete": { "operationId": "delete_user", "summary": "Permanently delete a user." }
+    },
+    "/teams": {
+      "post": {
+        "operationId": "create_team",
+        "summary": "Create a team.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "admin_email"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "admin_email": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/teams/{team_id}/budget": {
+      "put": { "operationId": "set_team_budget", "summary": "Set a team's spending budget." }
+    },
+    "/emails/send": {
+      "post": { "operationId": "send_email", "summary": "Send a transactional email." }
+    }
+  }
+}

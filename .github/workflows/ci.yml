@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Compiler tests (node)
+        run: npm test
+
+      - name: Gateway vet + test (go)
+        working-directory: gateway
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: gofmt check
+        working-directory: gateway
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build gateway binary
+        working-directory: gateway
+        run: go build -o bin/gateway .
+      - name: Build Docker image
+        run: docker build -t wrapi:ci .

@@ -1,0 +1,47 @@
+{
+  "name": "wrapi",
+  "version": "1.0.0",
+  "description": "Compile any REST API's OpenAPI spec into an agent-native gateway: a stateless policy map + a prompt-optimized agent spec, using any OpenAI-compatible LLM endpoint.",
+  "type": "module",
+  "bin": {
+    "wrapi": "compiler/bin/wrapi.js"
+  },
+  "files": [
+    "compiler/compiler.js",
+    "compiler/bin/",
+    "README.md",
+    "ROADMAP.md"
+  ],
+  "scripts": {
+    "compile": "node compiler/bin/wrapi.js",
+    "build": "node compiler/bin/wrapi.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "openai": "^4.77.0"
+  },
+  "keywords": [
+    "wrapi",
+    "openapi",
+    "ai-agents",
+    "agent",
+    "api-gateway",
+    "llm",
+    "mcp",
+    "guardrails",
+    "human-in-the-loop"
+  ],
+  "license": "MIT",
+  "author": "dspachos",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dspachos/wrapi.git"
+  },
+  "homepage": "https://github.com/dspachos/wrapi#readme",
+  "bugs": {
+    "url": "https://github.com/dspachos/wrapi/issues"
+  }
+}

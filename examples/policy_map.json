@@ -1,0 +1,34 @@
+[
+  {
+    "type": "hitl",
+    "method": "POST",
+    "path": "/payments",
+    "risk_rules": [{ "field": "amount", "operator": "GT", "value": 100 }],
+    "human_message_template": "The agent is attempting to charge {amount} via {method} {path}. Approving moves real funds. Confirm?"
+  },
+  {
+    "type": "hitl",
+    "method": "DELETE",
+    "path": "/users/{user_id}",
+    "risk_rules": [],
+    "human_message_template": "The agent is attempting to permanently delete user {user_id}. This is irreversible. Confirm?"
+  },
+  {
+    "type": "audit",
+    "method": "POST",
+    "path": "/teams",
+    "audit_fields": ["name", "admin_email"]
+  },
+  {
+    "type": "pii_redact",
+    "method": "GET",
+    "path": "/users/{user_id}",
+    "redact": ["ssn", "card.number", "phone"]
+  },
+  {
+    "type": "dry_run",
+    "method": "POST",
+    "path": "/emails/send",
+    "dry_run_response": { "sent": false, "note": "dry run — no email dispatched" }
+  }
+]

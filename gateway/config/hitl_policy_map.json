@@ -1,0 +1,45 @@
+[
+  {
+    "type": "hitl",
+    "method": "POST",
+    "path": "/payments",
+    "risk_rules": [
+      { "field": "amount", "operator": "GT", "value": 100 }
+    ],
+    "human_message_template": "The agent is attempting to charge {amount} {currency} via {method} {path}. Approving moves real funds. Confirm?"
+  },
+  {
+    "type": "hitl",
+    "method": "PUT",
+    "path": "/users/{user_id}",
+    "risk_rules": [
+      { "field": "is_admin", "operator": "EQUALS", "value": true }
+    ],
+    "human_message_template": "The agent is attempting to grant admin to user {user_id} (is_admin=true) via {method} {path}. This escalates privileges. Confirm?"
+  },
+  {
+    "type": "hitl",
+    "method": "DELETE",
+    "path": "/users/{user_id}",
+    "risk_rules": [],
+    "human_message_template": "The agent is attempting to permanently delete user {user_id} via {method} {path}. This is irreversible. Confirm?"
+  },
+  {
+    "type": "audit",
+    "method": "POST",
+    "path": "/teams",
+    "audit_fields": ["name", "admin_email"]
+  },
+  {
+    "type": "pii_redact",
+    "method": "GET",
+    "path": "/users/{user_id}",
+    "redact": ["ssn", "card.number", "phone"]
+  },
+  {
+    "type": "dry_run",
+    "method": "POST",
+    "path": "/emails/send",
+    "dry_run_response": { "sent": false, "note": "dry run — no email dispatched" }
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "path": "/users",
+    "method": "GET",
+    "include": ["id", "email", "role"],
+    "max_items": 50
+  }
+]
