@@ -41,6 +41,10 @@ const LLM_API_KEY = process.env.LLM_API_KEY || process.env.OPENAI_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL || process.env.OPENAI_MODEL || "gpt-4o";
 const MAX_OPS_PER_CALL = Math.max(1, Number(process.env.LLM_MAX_OPS_PER_CALL || 20));
 const CONCURRENCY = Math.max(1, Number(process.env.LLM_CONCURRENCY || 4));
+// Anthropic/Gemini-backed OpenAI-compatible proxies (e.g. LiteLLM) require an
+// explicit completion cap and default it low (~4096), truncating a batch's
+// JSON mid-array. Set a generous default; override with LLM_MAX_TOKENS.
+const MAX_TOKENS = Math.max(1, Number(process.env.LLM_MAX_TOKENS || 16384));
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 15000);
 
 // Default output location: gateway/config (so `make run` finds the artifacts).
@@ -237,7 +241,7 @@ A) type "hitl" — require a human to approve a dangerous call before it runs.
          Operators: GT, GTE, LT, LTE, EQUALS, NOT_EQUALS, CONTAINS, EXISTS.
          Fields resolve against a MERGED context of the request body, query params, AND path params — so a path placeholder like {user_id} is available as field "user_id".
          PREFER an empty array (always intercept) for clearly destructive/privileged operations (e.g. any DELETE, role/permission changes). Use a numeric threshold ONLY when the schema implies a real, meaningful boundary — do NOT invent arbitrary numbers. Use EQUALS for a specific dangerous value (e.g. {"field":"is_admin","operator":"EQUALS","value":true}).
-     - "human_message_template": ONE clear sentence for a human approver: the action, its key parameters, and its impact. Interpolate {method}, {path}, and any field as {field} (body, query, or path). Example: "The agent is attempting to charge {amount} {currency} via {method} {path}. Confirm?"
+     - "human_message_template": ONE clear sentence for a human approver: the action, its key parameters, and its impact. It will be shown to a human by the agent, so end it by explicitly asking the human to decide (e.g. "Approve this?" / "Ask the human to confirm before proceeding."), NOT with a bare "Confirm?" that an agent might answer itself. Interpolate {method}, {path}, and any field as {field} (body, query, or path). Example: "The agent is attempting to charge {amount} {currency} via {method} {path}. This moves real funds — ask the human to approve before proceeding."
 
 B) type "pii_redact" — for read operations whose RESPONSE schema contains sensitive fields; the gateway strips them before the agent sees them.
    Add:
@@ -301,6 +305,7 @@ async function compileBatch(client, batchSpec, index, total) {
   const completion = await client.chat.completions.create({
     model: LLM_MODEL,
     temperature: 0,
+    max_tokens: MAX_TOKENS,
     // json_object is the most broadly supported structured-output mode across
     // OpenAI-compatible servers; the prompt fully constrains the shape.
     response_format: { type: "json_object" },

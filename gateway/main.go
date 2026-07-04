@@ -382,16 +382,21 @@ func (g *Gateway) validateApproval(tokenStr, method, path, bodyHash string) erro
 }
 
 type approvalRequiredResponse struct {
-	Error           string `json:"error"`
-	MessageForHuman string `json:"message_for_human"`
-	HITLToken       string `json:"hitl_token"`
+	Error            string `json:"error"`
+	AgentInstruction string `json:"agent_instruction"`
+	MessageForHuman  string `json:"message_for_human"`
+	HITLToken        string `json:"hitl_token"`
 }
 
 func writeApprovalRequired(w http.ResponseWriter, message, token string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(approvalRequiredResponse{
-		Error:           "human_approval_required",
+		Error: "human_approval_required",
+		AgentInstruction: "STOP — do not proceed on your own. Show `message_for_human` to a human " +
+			"operator and wait for their decision. Only if the human approves, retry this EXACT " +
+			"request (same method, path, and body) with the header `X-HITL-Approval: <hitl_token>`. " +
+			"If the human declines, abort and do not retry.",
 		MessageForHuman: message,
 		HITLToken:       token,
 	})
