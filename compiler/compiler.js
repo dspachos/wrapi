@@ -217,42 +217,55 @@ export function buildBatchSpec(spec, batchOps) {
 // Step 2/3 — LLM extraction over an OpenAI-compatible endpoint
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are a Principal API Security Architect building a Human-in-the-Loop (HITL) policy compiler.
+const SYSTEM_PROMPT = `You are wrapi's compiler. You turn a legacy OpenAPI (Swagger) spec into a compact config that makes an existing REST API easy for AI agents to USE, cheap in TOKENS, and SAFE by default.
 
-You are given a SUBSET of a larger OpenAPI (Swagger) specification (a batch of operations plus the components they reference). Analyze ONLY the operations present in this subset. You MUST return a SINGLE JSON object.
+You are given a SUBSET of a larger spec (a batch of operations plus the components they reference). Analyze ONLY the operations in this subset. NEVER invent paths, fields, parameters, or values that are not present in the subset. Return a SINGLE JSON object.
 
-JOB 1 — Extract HIGH-RISK endpoints into "hitl_policy_map".
-An endpoint is high-risk if invoking it could cause irreversible, costly, destructive, privileged, or externally-visible effects. Examples: money movement / payments / transfers / refunds, deleting or purging resources, sending communications (email/SMS), changing permissions or roles, provisioning/deprovisioning infrastructure, publishing, or bulk mutations.
-
-For each high-risk endpoint present in this subset, emit an object with:
-  - "path": the exact OpenAPI path template (e.g. "/payments", "/users/{id}"). Keep {param} placeholders verbatim.
-  - "method": the UPPERCASE HTTP method (e.g. "POST", "DELETE").
-  - "risk_rules": an array of concrete conditions evaluated against the JSON request body. Each condition is:
-        { "field": "<dot.path.into.body>", "operator": "<OP>", "value": <string|number|boolean> }
-      Supported operators: "GT", "GTE", "LT", "LTE", "EQUALS", "NOT_EQUALS", "CONTAINS", "EXISTS".
-      Derive thresholds from the schema/semantics. Example: a payment endpoint with an "amount" field => { "field": "amount", "operator": "GT", "value": 100 }.
-      For inherently destructive endpoints (e.g. DELETE) with no meaningful numeric guard, use a single EXISTS check on the most relevant field, or an empty array [] to mean "ALWAYS require approval".
-      The gateway intercepts only when ALL conditions in risk_rules evaluate true (logical AND). An empty array means unconditional interception.
-  - "human_message_template": a clear, descriptive sentence shown to a human approver describing the action, its parameters, and its implications. You may interpolate body fields with {field} and also {path} and {method}. Example: "The agent is attempting to charge {amount} via {method} {path}. Approving will move real funds. Confirm?"
-
-Only include genuinely risky endpoints. Read-only GETs and harmless lookups MUST NOT appear.
-
-JOB 2 — Produce "agent_openapi": a stripped, prompt-optimized OpenAPI fragment containing ONLY the absolute semantic information an LLM agent needs for function-calling, for the operations in THIS subset.
-
-For each operation:
-  - "operationId": REWRITE it into a clean, self-explanatory tool name for an LLM to select — lowercase snake_case, verb_noun form, derived from what the endpoint DOES, not from the origin's mangled id. E.g. "internal_provision_key_internal_provision_key_post" => "provision_private_ai_key"; "users__user_id__delete" => "delete_user". Make each name unique and unambiguous across the whole API.
-  - "summary": REWRITE into a single concise, action-oriented sentence optimized for tool selection: what the endpoint does and when an agent should call it. Drop marketing/boilerplate.
-  - Keep: path, method, required parameters/requestBody field names + types + descriptions, and short response semantics.
-  - STRIP verbose examples, vendor extensions (x-*), security boilerplate, servers noise, long prose, and anything not needed to decide how to call the endpoint.
-
-Return it as { "paths": { "<path>": { "<method>": {...} } } } — do NOT repeat the info/openapi header (the compiler supplies that). Aim for minimal tokens while preserving meaning.
-
-JOB 3 — Produce "response_shapes": an OPTIONAL array of response projections that shrink verbose responses to only what an agent needs, cutting recurring token cost. For each operation whose successful response is large or list-like, emit:
-  - "path": the exact OpenAPI path template (as in JOB 1).
+=== JOB 1 — "hitl_policy_map": a typed list of runtime guardrails ===
+Each policy object has:
+  - "type": one of "hitl", "pii_redact", "audit". Set it explicitly.
+  - "path": the exact OpenAPI path template (keep {param} placeholders verbatim).
   - "method": the UPPERCASE HTTP method.
-  - "include": an array of dot-paths (relative to a single record) the agent needs, e.g. ["id", "email", "team.id"]. For list endpoints these apply to EACH element.
-  - "max_items": OPTIONAL integer cap on array length for list endpoints.
-Only emit a shape when you are CONFIDENT the omitted fields are not needed to act on the result. If unsure, OMIT the operation entirely — the gateway then passes its response through untouched. Read-only detail GETs and list endpoints are the best candidates; never project write endpoints whose response the caller must inspect in full.
+
+Emit these types as warranted by the operation:
+
+A) type "hitl" — require a human to approve a dangerous call before it runs.
+   Dangerous = irreversible, costly, destructive, privileged, or externally-visible effects: money movement (payments/transfers/refunds), delete/purge, sending communications (email/SMS), changing permissions/roles, provisioning/deprovisioning infra, publishing, or bulk mutations.
+   Add:
+     - "risk_rules": an array of conditions ANDed together; the gateway intercepts only when ALL are true. An empty array [] means ALWAYS intercept.
+         Each rule: { "field": "<dot.path>", "operator": "<OP>", "value": <string|number|boolean> }
+         Operators: GT, GTE, LT, LTE, EQUALS, NOT_EQUALS, CONTAINS, EXISTS.
+         Fields resolve against a MERGED context of the request body, query params, AND path params — so a path placeholder like {user_id} is available as field "user_id".
+         PREFER an empty array (always intercept) for clearly destructive/privileged operations (e.g. any DELETE, role/permission changes). Use a numeric threshold ONLY when the schema implies a real, meaningful boundary — do NOT invent arbitrary numbers. Use EQUALS for a specific dangerous value (e.g. {"field":"is_admin","operator":"EQUALS","value":true}).
+     - "human_message_template": ONE clear sentence for a human approver: the action, its key parameters, and its impact. Interpolate {method}, {path}, and any field as {field} (body, query, or path). Example: "The agent is attempting to charge {amount} {currency} via {method} {path}. Confirm?"
+
+B) type "pii_redact" — for read operations whose RESPONSE schema contains sensitive fields; the gateway strips them before the agent sees them.
+   Add:
+     - "redact": array of dot-paths (relative to a record) to redact. Redact e.g. national IDs (ssn), full card numbers / cvv, passwords, secrets, api keys / tokens, private keys, and personal contact info (phone, home address) WHEN present in the response schema. Do NOT redact identifiers the agent needs (id, resource email) unless clearly sensitive.
+   Only emit when the response schema actually contains such fields.
+
+C) type "audit" — for sensitive-but-allowed writes worth logging without blocking (e.g. creating users/teams). Add:
+     - "audit_fields": array of field names (body/query/path) to record. Use sparingly.
+
+Read-only lookups that expose nothing sensitive MUST NOT produce a policy.
+
+=== JOB 2 — "agent_openapi": a stripped, function-calling-optimized spec ===
+For each operation in the subset:
+  - "operationId": REWRITE into a clean, self-explanatory lowercase snake_case verb_noun tool name derived from what the endpoint DOES (not the origin's mangled id). E.g. "users__user_id__delete" => "delete_user". (Global uniqueness is enforced later; just be descriptive.)
+  - "summary": ONE concise, action-oriented sentence — what it does and when an agent should call it.
+  - "parameters": for each parameter the caller needs, keep name, "in" (path/query/header), "required" (bool), type, a short description, and "enum" if the schema defines allowed values. Enums are important and cheap — always keep them.
+  - "requestBody": keep the JSON schema trimmed to property names + types + required list + short descriptions + enums.
+  - Keep a short note of the success response (what it returns).
+  - STRIP verbose examples, vendor extensions (x-*), security boilerplate, servers, and long prose.
+Return as { "paths": { "<path>": { "<method>": {...} } } } — do NOT repeat the info/openapi header. Minimize tokens while preserving meaning.
+
+=== JOB 3 — "response_shapes": OPTIONAL response projections that cut token cost ===
+For an operation whose successful response is large or list-like:
+  - "path", "method" (UPPERCASE).
+  - "include": dot-paths (relative to a SINGLE record) the agent needs. For lists, applied to each element.
+  - "max_items": OPTIONAL cap on list length.
+  - "list_path": OPTIONAL dot-path to the array when the response WRAPS the list in an object, e.g. "data" for { "data": [...], "total": N }. OMIT it for a bare-array response.
+Only emit when you are CONFIDENT the omitted fields are not needed. If unsure, OMIT the operation (the gateway passes it through untouched). Read-only detail GETs and list endpoints are the best candidates; never project a write whose full response the caller must inspect.
 
 Return ONLY a JSON object of the exact shape:
 { "hitl_policy_map": [ ...policy objects... ], "agent_openapi": { "paths": { ... } }, "response_shapes": [ ...shape objects... ] }
@@ -336,7 +349,10 @@ const VALID_OPERATORS = new Set([
   "GT", "GTE", "LT", "LTE", "EQUALS", "NOT_EQUALS", "CONTAINS", "EXISTS",
 ]);
 
-function normalizePolicyMap(rawPolicies) {
+// Policy types the gateway enforces today (all stateless).
+const VALID_POLICY_TYPES = new Set(["hitl", "audit", "pii_redact", "dry_run"]);
+
+export function normalizePolicyMap(rawPolicies) {
   const out = [];
   const seen = new Set();
   for (const p of rawPolicies) {
@@ -346,30 +362,62 @@ function normalizePolicyMap(rawPolicies) {
       continue;
     }
     const method = p.method.toUpperCase();
-    const dedupeKey = `${method} ${p.path}`;
-    if (seen.has(dedupeKey)) continue; // guard against cross-batch duplicates
-    seen.add(dedupeKey);
+    const type =
+      typeof p.type === "string" && p.type.trim() ? p.type.toLowerCase() : "hitl";
+    if (!VALID_POLICY_TYPES.has(type)) {
+      console.warn(`[wrapi] dropping policy with unsupported type "${p.type}" (${method} ${p.path})`);
+      continue;
+    }
+    // Dedupe by type+method+path so an endpoint can carry multiple policy types
+    // (e.g. audit AND hitl) without one clobbering the other.
+    const dedupeKey = `${type} ${method} ${p.path}`;
+    if (seen.has(dedupeKey)) continue;
 
-    const rules = Array.isArray(p.risk_rules) ? p.risk_rules : [];
-    const normRules = [];
-    for (const r of rules) {
-      if (!r || typeof r.field !== "string" || typeof r.operator !== "string") continue;
-      const op = r.operator.toUpperCase();
-      if (!VALID_OPERATORS.has(op)) {
-        console.warn(`[wrapi] dropping rule with unknown operator "${r.operator}"`);
+    let entry;
+    if (type === "hitl") {
+      const rules = Array.isArray(p.risk_rules) ? p.risk_rules : [];
+      const normRules = [];
+      for (const r of rules) {
+        if (!r || typeof r.field !== "string" || typeof r.operator !== "string") continue;
+        const op = r.operator.toUpperCase();
+        if (!VALID_OPERATORS.has(op)) {
+          console.warn(`[wrapi] dropping rule with unknown operator "${r.operator}"`);
+          continue;
+        }
+        normRules.push({ field: r.field, operator: op, value: r.value ?? null });
+      }
+      entry = {
+        type,
+        path: p.path,
+        method,
+        risk_rules: normRules,
+        human_message_template:
+          typeof p.human_message_template === "string" && p.human_message_template.trim()
+            ? p.human_message_template
+            : `The agent is attempting a high-risk operation: {method} {path}. Human approval required.`,
+      };
+    } else if (type === "pii_redact") {
+      const redact = Array.isArray(p.redact)
+        ? p.redact.filter((f) => typeof f === "string" && f.trim())
+        : [];
+      if (redact.length === 0) {
+        console.warn(`[wrapi] dropping pii_redact policy with no fields (${method} ${p.path})`);
         continue;
       }
-      normRules.push({ field: r.field, operator: op, value: r.value ?? null });
+      entry = { type, path: p.path, method, redact };
+    } else if (type === "audit") {
+      const auditFields = Array.isArray(p.audit_fields)
+        ? p.audit_fields.filter((f) => typeof f === "string" && f.trim())
+        : [];
+      entry = { type, path: p.path, method, audit_fields: auditFields };
+    } else {
+      // dry_run
+      entry = { type, path: p.path, method };
+      if (p.dry_run_response !== undefined) entry.dry_run_response = p.dry_run_response;
     }
-    out.push({
-      path: p.path,
-      method,
-      risk_rules: normRules,
-      human_message_template:
-        typeof p.human_message_template === "string" && p.human_message_template.trim()
-          ? p.human_message_template
-          : `The agent is attempting a high-risk operation: {method} {path}. Human approval required.`,
-    });
+
+    seen.add(dedupeKey);
+    out.push(entry);
   }
   return out;
 }
@@ -451,8 +499,13 @@ export function normalizeResponseShapes(rawShapes) {
     const maxItems = Number.isInteger(s.max_items) && s.max_items > 0 ? s.max_items : 0;
     if (include.length === 0 && maxItems === 0) continue; // no-op shape
 
+    const entry = { path: s.path, method, include, max_items: maxItems };
+    if (typeof s.list_path === "string" && s.list_path.trim()) {
+      entry.list_path = s.list_path.trim();
+    }
+
     seen.add(key);
-    out.push({ path: s.path, method, include, max_items: maxItems });
+    out.push(entry);
   }
   return out;
 }

@@ -262,6 +262,10 @@ GET /users  →  upstream 1021 bytes  →  gateway 59 bytes  (-95%)
 
 - **`include`** — dot-paths to keep (applied to each record for list endpoints).
 - **`max_items`** — cap list length.
+- **`list_path`** — when the response wraps the list in an object (e.g.
+  `{ "data": [...], "total": N }`), point at the array (`"data"`); the wrapper's
+  other fields are preserved. wrapi also auto-detects common keys (`data`,
+  `items`, `results`, `records`).
 - Operations with **no shape pass through untouched** — projection never removes
   what it isn't sure about.
 - On by default; disable with `RESPONSE_PROJECTION=off`.
@@ -291,7 +295,7 @@ And at compile time you get the headline number:
 ```
 
 - **Matching** — `method` + `path`. Templates (`/users/{id}`) and `*` wildcards compile to anchored regexes at boot.
-- **`risk_rules`** — conditions against the JSON body. Operators: `GT`, `GTE`, `LT`, `LTE`, `EQUALS`, `NOT_EQUALS`, `CONTAINS`, `EXISTS`. `field` supports dot-paths (`customer.tier`). Interception fires only when **all** rules are true (logical AND). An **empty** array means *always intercept*.
+- **`risk_rules`** — conditions evaluated against the request: **body, query params, and path params merged** (so `{user_id}` in the path is available as `user_id`). Operators: `GT`, `GTE`, `LT`, `LTE`, `EQUALS`, `NOT_EQUALS`, `CONTAINS`, `EXISTS`. `field` supports dot-paths (`customer.tier`). Interception fires only when **all** rules are true (logical AND). An **empty** array means *always intercept*.
 - **`human_message_template`** — interpolates `{path}`, `{method}`, and any `{body.field}`.
 
 </details>
@@ -301,7 +305,9 @@ And at compile time you get the headline number:
 The policy map is a **typed policy engine**. Each entry has a `type` (default
 `hitl`, for backward compatibility). All implemented types are **stateless** —
 they enforce via a signed token or a deterministic transform, so any replica
-handles any request.
+handles any request. The compiler proposes `hitl` and `pii_redact` policies
+automatically (the latter by spotting sensitive fields in response schemas); all
+types are also hand-authorable.
 
 | `type` | Phase | What it does |
 |--------|-------|--------------|

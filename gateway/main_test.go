@@ -344,6 +344,101 @@ func TestMiddlewareDryRun(t *testing.T) {
 	}
 }
 
+func TestExtractPathParams(t *testing.T) {
+	got := extractPathParams("/users/{user_id}/roles/{role_id}", "/users/42/roles/admin")
+	if got["user_id"] != "42" || got["role_id"] != "admin" {
+		t.Errorf("path params wrong: %+v", got)
+	}
+	// Segment-count mismatch (e.g. wildcard) yields no params, not a panic.
+	if len(extractPathParams("/files/*", "/files/a/b")) != 0 {
+		t.Error("mismatched segment counts should yield no params")
+	}
+}
+
+func TestMiddlewarePathParamRuleAndMessage(t *testing.T) {
+	// A rule + message that reference a PATH param must work (regression: they
+	// used to silently fail because only the body was evaluated).
+	gw := &Gateway{jwtSecret: []byte("s"), policies: []Policy{
+		{Method: "DELETE", Path: "/users/{user_id}", re: patternToRegex("/users/{user_id}"),
+			RiskRules:            []RiskRule{{Field: "user_id", Operator: "EXISTS"}},
+			HumanMessageTemplate: "Delete user {user_id} via {method} {path}?"},
+	}}
+	called := false
+	h := gw.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true }))
+
+	req := httptest.NewRequest("DELETE", "/users/42", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if called {
+		t.Error("path-param EXISTS rule should have intercepted (not forwarded)")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if msg, _ := body["message_for_human"].(string); msg != "Delete user 42 via DELETE /users/42?" {
+		t.Errorf("path param not interpolated into message: %q", msg)
+	}
+}
+
+func TestMiddlewareQueryParamRule(t *testing.T) {
+	gw := &Gateway{jwtSecret: []byte("s"), policies: []Policy{
+		{Method: "POST", Path: "/purge", re: patternToRegex("/purge"),
+			RiskRules: []RiskRule{{Field: "force", Operator: "EQUALS", Value: "true"}}},
+	}}
+	called := false
+	h := gw.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true }))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/purge?force=true", nil))
+	if called {
+		t.Error("query-param rule should have intercepted")
+	}
+}
+
+func TestApplyShapeWrappedList(t *testing.T) {
+	shape := &ResponseShape{Include: []string{"id", "email"}, MaxItems: 2}
+	// Auto-detected wrapper key "data": records projected, "total" preserved.
+	body := map[string]any{
+		"total": 3.0,
+		"data": []any{
+			map[string]any{"id": 1.0, "email": "a@b.com", "secret": "x"},
+			map[string]any{"id": 2.0, "email": "c@d.com", "secret": "y"},
+			map[string]any{"id": 3.0, "email": "e@f.com", "secret": "z"},
+		},
+	}
+	out := applyShape(body, shape).(map[string]any)
+	if out["total"] != 3.0 {
+		t.Error("wrapper metadata should be preserved")
+	}
+	data := out["data"].([]any)
+	if len(data) != 2 {
+		t.Fatalf("max_items not applied inside wrapper: %d", len(data))
+	}
+	first := data[0].(map[string]any)
+	if _, ok := first["secret"]; ok {
+		t.Error("record fields not projected inside wrapper")
+	}
+}
+
+func TestApplyShapeExplicitListPath(t *testing.T) {
+	shape := &ResponseShape{Include: []string{"id"}, ListPath: "page.rows"}
+	body := map[string]any{
+		"page": map[string]any{
+			"rows": []any{map[string]any{"id": 1.0, "x": "drop"}},
+			"n":    1.0,
+		},
+	}
+	out := applyShape(body, shape).(map[string]any)
+	rows := out["page"].(map[string]any)["rows"].([]any)
+	if _, ok := rows[0].(map[string]any)["x"]; ok {
+		t.Error("explicit list_path projection did not drop fields")
+	}
+	if out["page"].(map[string]any)["n"] != 1.0 {
+		t.Error("sibling of list_path should be preserved")
+	}
+}
+
 func TestMiddlewareHITLStillGates(t *testing.T) {
 	// Untyped policy => defaults to hitl.
 	gw := &Gateway{jwtSecret: []byte("s"), policies: []Policy{

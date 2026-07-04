@@ -197,6 +197,35 @@ func getField(body map[string]any, field string) (any, bool) {
 	return cur, true
 }
 
+// extractPathParams maps {name} template segments to their values in the actual
+// request path, e.g. ("/users/{user_id}", "/users/42") -> {"user_id": "42"}.
+func extractPathParams(template, path string) map[string]any {
+	tSeg := strings.Split(strings.Trim(template, "/"), "/")
+	pSeg := strings.Split(strings.Trim(path, "/"), "/")
+	out := map[string]any{}
+	if len(tSeg) != len(pSeg) {
+		return out // wildcard or segment-count mismatch: skip extraction
+	}
+	for i, seg := range tSeg {
+		if len(seg) >= 2 && seg[0] == '{' && seg[len(seg)-1] == '}' {
+			out[seg[1:len(seg)-1]] = pSeg[i]
+		}
+	}
+	return out
+}
+
+// mergeContext overlays later maps onto earlier ones (later wins). Used to build
+// the rule/message evaluation context: request body < query params < path params.
+func mergeContext(maps ...map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, m := range maps {
+		for k, v := range m {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func toFloat(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -422,25 +451,35 @@ func (g *Gateway) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Parse the body for rule evaluation (best-effort; empty on failure).
-		var parsed map[string]any
+		// Build the base rule/message context from the request body + query
+		// params. Path params are merged in per-policy (each template differs).
+		base := map[string]any{}
 		if len(bytes.TrimSpace(bodyBytes)) > 0 {
-			_ = json.Unmarshal(bodyBytes, &parsed)
+			var parsed map[string]any
+			if json.Unmarshal(bodyBytes, &parsed) == nil {
+				for k, v := range parsed {
+					base[k] = v
+				}
+			}
 		}
-		if parsed == nil {
-			parsed = map[string]any{}
+		for k, vs := range r.URL.Query() {
+			if len(vs) > 0 {
+				base[k] = vs[0]
+			}
 		}
 
 		// Dispatch ingress policies by type. Precedence: audit (record) ->
 		// dry_run (short-circuit) -> hitl (approval gate).
 		var dryRun, hitl *Policy
+		var hitlCtx map[string]any
 		for _, p := range matches {
-			if !p.rulesSatisfied(parsed) {
+			pctx := mergeContext(base, extractPathParams(p.Path, r.URL.Path))
+			if !p.rulesSatisfied(pctx) {
 				continue
 			}
 			switch p.policyType() {
 			case policyAudit:
-				g.audit(p, r, parsed)
+				g.audit(p, r, pctx)
 			case policyDryRun:
 				if dryRun == nil {
 					dryRun = p
@@ -448,6 +487,7 @@ func (g *Gateway) Middleware(next http.Handler) http.Handler {
 			case policyHITL:
 				if hitl == nil {
 					hitl = p
+					hitlCtx = pctx
 				}
 			}
 		}
@@ -473,7 +513,7 @@ func (g *Gateway) Middleware(next http.Handler) http.Handler {
 				http.Error(w, "failed to mint approval token", http.StatusInternalServerError)
 				return
 			}
-			writeApprovalRequired(w, hitl.renderMessage(r.Method, r.URL.Path, parsed), token)
+			writeApprovalRequired(w, hitl.renderMessage(r.Method, r.URL.Path, hitlCtx), token)
 			return
 		}
 
@@ -630,8 +670,9 @@ func writeAgentError(w http.ResponseWriter, status int, slug, message, fix strin
 type ResponseShape struct {
 	Path     string   `json:"path"`
 	Method   string   `json:"method"`
-	Include  []string `json:"include"`   // dot-paths to keep (per record)
-	MaxItems int      `json:"max_items"` // cap on list length (0 = no cap)
+	Include  []string `json:"include"`             // dot-paths to keep (per record)
+	MaxItems int      `json:"max_items"`           // cap on list length (0 = no cap)
+	ListPath string   `json:"list_path,omitempty"` // dot-path to the array inside a wrapper (e.g. "data")
 
 	re *regexp.Regexp
 }
@@ -670,6 +711,51 @@ func projectValue(v any, include []string, maxItems int) any {
 	default:
 		return v
 	}
+}
+
+// commonListKeys are the wrapper fields wrapi will auto-detect as the record
+// array when a shape has no explicit list_path.
+var commonListKeys = []string{"data", "items", "results", "records"}
+
+// applyShape projects a decoded response per a shape. It handles three shapes:
+//   - explicit list_path -> project the array at that dot-path, leave the wrapper
+//   - a bare top-level array or object -> project directly
+//   - an object wrapping a list under a common key (data/items/...) -> project it
+func applyShape(v any, shape *ResponseShape) any {
+	if shape.ListPath != "" {
+		return projectAtPath(v, strings.Split(shape.ListPath, "."), shape)
+	}
+	if m, ok := v.(map[string]any); ok {
+		for _, key := range commonListKeys {
+			if arr, ok := m[key].([]any); ok {
+				m[key] = projectValue(arr, shape.Include, shape.MaxItems)
+				return m
+			}
+		}
+	}
+	return projectValue(v, shape.Include, shape.MaxItems)
+}
+
+// projectAtPath projects the array located at the given dot-path inside an
+// object, leaving the surrounding wrapper (e.g. paging metadata) intact.
+func projectAtPath(v any, parts []string, shape *ResponseShape) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	cur := m
+	for i := 0; i < len(parts)-1; i++ {
+		next, ok := cur[parts[i]].(map[string]any)
+		if !ok {
+			return v // path not found; leave unchanged
+		}
+		cur = next
+	}
+	last := parts[len(parts)-1]
+	if arr, ok := cur[last].([]any); ok {
+		cur[last] = projectValue(arr, shape.Include, shape.MaxItems)
+	}
+	return m
 }
 
 // pickPaths returns a new object containing only the given dot-paths.
@@ -763,7 +849,7 @@ func (g *Gateway) transformSuccess(resp *http.Response) error {
 	}
 
 	if shape != nil {
-		parsed = projectValue(parsed, shape.Include, shape.MaxItems)
+		parsed = applyShape(parsed, shape)
 	}
 	for _, p := range redactors {
 		parsed = redactValue(parsed, p.Redact)

@@ -7,6 +7,7 @@ import {
   deriveOperationId,
   normalizeAgentSpec,
   normalizeResponseShapes,
+  normalizePolicyMap,
   estimateTokens,
 } from "./compiler.js";
 
@@ -145,6 +146,53 @@ test("normalizeResponseShapes validates, dedupes, and drops no-ops", () => {
   assert.deepEqual(shapes[0], { path: "/users", method: "GET", include: ["id", "email"], max_items: 50 });
   assert.deepEqual(shapes[1], { path: "/y", method: "GET", include: [], max_items: 10 });
   assert.deepEqual(shapes[2], { path: "/z", method: "GET", include: ["a"], max_items: 0 });
+});
+
+test("normalizePolicyMap defaults type to hitl and normalizes rules", () => {
+  const out = normalizePolicyMap([
+    {
+      method: "post",
+      path: "/payments",
+      risk_rules: [{ field: "amount", operator: "gt", value: 100 }],
+      human_message_template: "Charge {amount}?",
+    },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "hitl");
+  assert.equal(out[0].method, "POST");
+  assert.deepEqual(out[0].risk_rules, [{ field: "amount", operator: "GT", value: 100 }]);
+});
+
+test("normalizePolicyMap keeps multiple types on the same endpoint", () => {
+  const out = normalizePolicyMap([
+    { type: "audit", method: "POST", path: "/teams", audit_fields: ["name"] },
+    { type: "hitl", method: "POST", path: "/teams", risk_rules: [] },
+    { type: "hitl", method: "POST", path: "/teams", risk_rules: [] }, // dup -> dropped
+  ]);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out.map((p) => p.type).sort(), ["audit", "hitl"]);
+});
+
+test("normalizePolicyMap handles pii_redact / dry_run and drops bad ones", () => {
+  const out = normalizePolicyMap([
+    { type: "pii_redact", method: "GET", path: "/users/{id}", redact: ["ssn", 5, ""] },
+    { type: "pii_redact", method: "GET", path: "/x", redact: [] }, // no fields -> dropped
+    { type: "dry_run", method: "POST", path: "/emails", dry_run_response: { sent: false } },
+    { type: "bogus", method: "GET", path: "/y" }, // unsupported -> dropped
+  ]);
+  assert.equal(out.length, 2);
+  const redact = out.find((p) => p.type === "pii_redact");
+  assert.deepEqual(redact.redact, ["ssn"]);
+  const dry = out.find((p) => p.type === "dry_run");
+  assert.deepEqual(dry.dry_run_response, { sent: false });
+});
+
+test("normalizeResponseShapes carries list_path for wrapped lists", () => {
+  const out = normalizeResponseShapes([
+    { path: "/users", method: "GET", include: ["id"], list_path: "data" },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].list_path, "data");
 });
 
 test("estimateTokens is a stable ~chars/4 heuristic", () => {
