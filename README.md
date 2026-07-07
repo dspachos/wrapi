@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Work in progress:** This project is under active development and is subject to change.
+
 <div align="center">
 
 # 🚦 wrapi
