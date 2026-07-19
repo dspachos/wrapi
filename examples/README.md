@@ -6,7 +6,10 @@ with the matching env vars (see the root `.env.example`).
 | File | Env var | What it shows |
 |------|---------|---------------|
 | [`policy_map.json`](./policy_map.json) | `GATEWAY_CONFIG_PATH` | All four stateless policy types: `hitl`, `audit`, `pii_redact`, `dry_run`. |
+| [`xquik_policy_map.json`](./xquik_policy_map.json) | `GATEWAY_CONFIG_PATH` | Xquik API policies for guarded post, direct-message, search, and account routes. |
 | [`composites.json`](./composites.json) | `COMPOSITES_PATH` | A two-step composite (`onboard_team`) with templating + rollback. |
+
+Xquik is an independent third-party service. Not affiliated with X Corp. "Twitter" and "X" are trademarks of X Corp.
 
 > The `compiler` generates `hitl_policy_map.json`, `agent_openapi.json`, and
 > `response_shapes.json` for you. Composite operations are hand-authored (for

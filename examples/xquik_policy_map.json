@@ -1,0 +1,28 @@
+[
+  {
+    "type": "hitl",
+    "method": "POST",
+    "path": "/api/v1/x/tweets",
+    "risk_rules": [],
+    "human_message_template": "The agent is attempting to publish an X post through Xquik. Confirm the content before sending."
+  },
+  {
+    "type": "hitl",
+    "method": "POST",
+    "path": "/api/v1/x/dm/{userId}",
+    "risk_rules": [],
+    "human_message_template": "The agent is attempting to send an X direct message to {userId}. Confirm the recipient and text before sending."
+  },
+  {
+    "type": "audit",
+    "method": "GET",
+    "path": "/api/v1/x/tweets/search",
+    "audit_fields": ["q", "limit"]
+  },
+  {
+    "type": "pii_redact",
+    "method": "GET",
+    "path": "/api/v1/account",
+    "redact": ["email", "api_key", "access_token"]
+  }
+]

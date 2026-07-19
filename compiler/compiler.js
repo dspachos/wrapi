@@ -39,13 +39,13 @@ const REMOTE_OPENAPI_URL = process.env.REMOTE_OPENAPI_URL;
 const LLM_BASE_URL = process.env.LLM_BASE_URL || process.env.OPENAI_BASE_URL;
 const LLM_API_KEY = process.env.LLM_API_KEY || process.env.OPENAI_API_KEY;
 const LLM_MODEL = process.env.LLM_MODEL || process.env.OPENAI_MODEL || "gpt-4o";
-const MAX_OPS_PER_CALL = Math.max(1, Number(process.env.LLM_MAX_OPS_PER_CALL || 20));
-const CONCURRENCY = Math.max(1, Number(process.env.LLM_CONCURRENCY || 4));
+const MAX_OPS_PER_CALL = parsePositiveInteger(process.env.LLM_MAX_OPS_PER_CALL, 20);
+const CONCURRENCY = parsePositiveInteger(process.env.LLM_CONCURRENCY, 4);
 // Anthropic/Gemini-backed OpenAI-compatible proxies (e.g. LiteLLM) require an
 // explicit completion cap and default it low (~4096), truncating a batch's
 // JSON mid-array. Set a generous default; override with LLM_MAX_TOKENS.
-const MAX_TOKENS = Math.max(1, Number(process.env.LLM_MAX_TOKENS || 16384));
-const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 15000);
+const MAX_TOKENS = parsePositiveInteger(process.env.LLM_MAX_TOKENS, 16384);
+const FETCH_TIMEOUT_MS = parsePositiveInteger(process.env.FETCH_TIMEOUT_MS, 15000);
 
 // Default output location: gateway/config (so `make run` finds the artifacts).
 // Overridable per-invocation via the CLI's [output-dir] argument.
@@ -57,6 +57,11 @@ export const RESPONSE_SHAPES_FILENAME = "response_shapes.json";
 const HTTP_METHODS = new Set([
   "get", "put", "post", "delete", "options", "head", "patch", "trace",
 ]);
+
+export function parsePositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 function die(message) {
   console.error(`\n[wrapi] FATAL: ${message}\n`);

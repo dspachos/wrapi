@@ -9,7 +9,17 @@ import {
   normalizeResponseShapes,
   normalizePolicyMap,
   estimateTokens,
+  parsePositiveInteger,
 } from "./compiler.js";
+
+test("parsePositiveInteger rejects malformed compiler limits", () => {
+  assert.equal(parsePositiveInteger("25", 10), 25);
+  assert.equal(parsePositiveInteger("not-a-number", 10), 10);
+  assert.equal(parsePositiveInteger("0", 10), 10);
+  assert.equal(parsePositiveInteger("-3", 10), 10);
+  assert.equal(parsePositiveInteger("2.5", 10), 10);
+  assert.equal(parsePositiveInteger(undefined, 10), 10);
+});
 
 test("flattenOperations extracts one entry per method", () => {
   const spec = {
